@@ -1,3 +1,4 @@
+# WrdlStab.py
 import sys
 import re
 from collections import Counter
@@ -27,7 +28,7 @@ def load_wordlist_from_file(path, length):
                 words.append(w)
     return words
 
-def match_candidates(words, required_letters, pattern, blacklist):
+def match_candidates(words, required_letters, pattern, blacklist, yellow_positions):
     req_counter = Counter([c for c in required_letters.lower() if c.isalpha()])
     blacklist_set = set(blacklist.lower())
     pattern_re = '^' + ''.join(
@@ -55,6 +56,14 @@ def match_candidates(words, required_letters, pattern, blacklist):
                 ok = False
                 break
         if not ok:
+            continue
+        for pos, letters in yellow_positions.items():
+            if pos < 0 or pos >= len(w):
+                continue
+            if w[pos] in letters:
+                bad = True
+                break
+        if bad:
             continue
         candidates.append(w)
     return candidates
@@ -290,6 +299,7 @@ class WrdlStab(QWidget):
         length = self.spin_length.value()
         pattern = ['.' for _ in range(length)]
         greens_by_pos = {}
+        yellow_positions = {}
         yellow_seen = []
         grey_set = set()
         for row in self.rows:
@@ -300,6 +310,7 @@ class WrdlStab(QWidget):
                 if state == 3:
                     greens_by_pos.setdefault(i, set()).add(letter)
                 elif state == 2:
+                    yellow_positions.setdefault(i, set()).add(letter)
                     if letter not in yellow_seen:
                         yellow_seen.append(letter)
                 elif state == 1:
@@ -311,7 +322,7 @@ class WrdlStab(QWidget):
                 pattern_str = ''.join(pattern)
                 req_letters = ""
                 blacklist = ''.join(sorted(blacklist_set))
-                return req_letters, pattern_str, blacklist
+                return req_letters, pattern_str, blacklist, yellow_positions
         required_ordered = []
         for pos in range(length):
             if pos in greens_by_pos:
@@ -329,7 +340,7 @@ class WrdlStab(QWidget):
                 blacklist_set.discard(letter)
         pattern_str = ''.join(pattern)
         blacklist = ''.join(sorted(blacklist_set))
-        return req_letters, pattern_str, blacklist
+        return req_letters, pattern_str, blacklist, yellow_positions
     def on_find(self):
         length = self.spin_length.value()
         if not self.words:
@@ -337,7 +348,7 @@ class WrdlStab(QWidget):
             if not self.words:
                 QMessageBox.warning(self, "No words loaded", "Please load a wordlist (wordfreq or a local file).")
                 return
-        required, pattern, blacklist = self.gather_constraints()
+        required, pattern, blacklist, yellow_positions = self.gather_constraints()
         if len(pattern) != length:
             QMessageBox.warning(self, "Pattern length mismatch", f"Pattern ({len(pattern)}) must be same length as word length ({length}).")
             return
@@ -345,7 +356,8 @@ class WrdlStab(QWidget):
             self.words,
             required,
             pattern,
-            blacklist
+            blacklist,
+            yellow_positions
         )
         if not candidates:
             self.results.setPlainText("No matches.")
