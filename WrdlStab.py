@@ -1,4 +1,3 @@
-# WrdlStab.py
 import sys
 import re
 from collections import Counter
@@ -28,44 +27,33 @@ def load_wordlist_from_file(path, length):
                 words.append(w)
     return words
 
-def match_candidates(words, required_letters, pattern, blacklist, yellow_positions):
-    req_counter = Counter([c for c in required_letters.lower() if c.isalpha()])
-    blacklist_set = set(blacklist.lower())
-    pattern_re = '^' + ''.join(
-        ('.' if ch in ('_', '.') else re.escape(ch.lower()))
-        for ch in pattern
-    ) + '$'
-    regex = re.compile(pattern_re)
+def score_guess(guess, answer):
+    n = len(guess)
+    res = [1] * n
+    remaining = Counter()
+    for i in range(n):
+        if guess[i] == answer[i]:
+            res[i] = 3
+        else:
+            remaining[answer[i]] += 1
+    for i in range(n):
+        if res[i] != 3 and remaining[guess[i]] > 0:
+            res[i] = 2
+            remaining[guess[i]] -= 1
+    return res
+
+def match_candidates(words, guesses):
+    """Keep only words that would have produced exactly the observed colors
+    for every guess. guesses = [(guess_word, [states...]), ...]"""
     candidates = []
     for w in words:
-        if not regex.match(w):
-            continue
-        bad = False
-        for b in blacklist_set:
-            if b in req_counter:
-                continue
-            if b and b in w:
-                bad = True
-                break
-        if bad:
-            continue
-        wc = Counter(w)
         ok = True
-        for k, v in req_counter.items():
-            if wc.get(k, 0) < v:
+        for guess, states in guesses:
+            if len(guess) != len(w) or score_guess(guess, w) != states:
                 ok = False
                 break
-        if not ok:
-            continue
-        for pos, letters in yellow_positions.items():
-            if pos < 0 or pos >= len(w):
-                continue
-            if w[pos] in letters:
-                bad = True
-                break
-        if bad:
-            continue
-        candidates.append(w)
+        if ok:
+            candidates.append(w)
     return candidates
 
 class TileButton(QPushButton):
@@ -297,50 +285,14 @@ class WrdlStab(QWidget):
             QMessageBox.critical(self, "Error", f"Failed to load file:\n{e}")
     def gather_constraints(self):
         length = self.spin_length.value()
-        pattern = ['.' for _ in range(length)]
-        greens_by_pos = {}
-        yellow_positions = {}
-        yellow_seen = []
-        grey_set = set()
+        guesses = []
         for row in self.rows:
             states = row.get_states()
-            for i, (letter, state) in enumerate(states):
-                if not letter:
-                    continue
-                if state == 3:
-                    greens_by_pos.setdefault(i, set()).add(letter)
-                elif state == 2:
-                    yellow_positions.setdefault(i, set()).add(letter)
-                    if letter not in yellow_seen:
-                        yellow_seen.append(letter)
-                elif state == 1:
-                    grey_set.add(letter)
-        for pos, letters in greens_by_pos.items():
-            if len(letters) > 1:
-                all_letters = [chr(c) for c in range(ord('a'), ord('z')+1)]
-                blacklist_set = set(all_letters)
-                pattern_str = ''.join(pattern)
-                req_letters = ""
-                blacklist = ''.join(sorted(blacklist_set))
-                return req_letters, pattern_str, blacklist, yellow_positions
-        required_ordered = []
-        for pos in range(length):
-            if pos in greens_by_pos:
-                letter = next(iter(greens_by_pos[pos]))
-                pattern[pos] = letter
-                if letter not in required_ordered:
-                    required_ordered.append(letter)
-        for letter in yellow_seen:
-            if letter not in required_ordered:
-                required_ordered.append(letter)
-        req_letters = ''.join(required_ordered)
-        blacklist_set = set(grey_set)
-        for letter in list(blacklist_set):
-            if letter in req_letters:
-                blacklist_set.discard(letter)
-        pattern_str = ''.join(pattern)
-        blacklist = ''.join(sorted(blacklist_set))
-        return req_letters, pattern_str, blacklist, yellow_positions
+            letters = ''.join(l for l, _ in states)
+            if len(letters) != length:
+                continue
+            guesses.append((letters, [s for _, s in states]))
+        return guesses
     def on_find(self):
         length = self.spin_length.value()
         if not self.words:
@@ -348,17 +300,8 @@ class WrdlStab(QWidget):
             if not self.words:
                 QMessageBox.warning(self, "No words loaded", "Please load a wordlist (wordfreq or a local file).")
                 return
-        required, pattern, blacklist, yellow_positions = self.gather_constraints()
-        if len(pattern) != length:
-            QMessageBox.warning(self, "Pattern length mismatch", f"Pattern ({len(pattern)}) must be same length as word length ({length}).")
-            return
-        candidates = match_candidates(
-            self.words,
-            required,
-            pattern,
-            blacklist,
-            yellow_positions
-        )
+        guesses = self.gather_constraints()
+        candidates = match_candidates(self.words, guesses)
         if not candidates:
             self.results.setPlainText("No matches.")
             self.results.moveCursor(QTextCursor.MoveOperation.Start)
